@@ -26,6 +26,20 @@ node walker.js --lat 40.4203 --lng -3.7058 --heading 270 --steps 50
 node walker.js --headless --delay 4000
 ```
 
+### Modo manual (tú navegas, el script captura)
+
+```bash
+node walker.js --manual
+```
+
+Se abre Google Maps. Entra en Street View donde quieras y pulsa **↑** para avanzar:
+cada pulsación espera a que se mueva, deja cargar la imagen y guarda una captura.
+Cierra la ventana (o Ctrl+C en la terminal) para terminar.
+
+- `--settle 3000` si las capturas salen borrosas (da más tiempo a cargar).
+- `--no-clean` para que salga la interfaz de Maps en las capturas.
+- Las cookies se recuerdan en la carpeta `.perfil`, así no hay que aceptarlas cada vez.
+
 `node walker.js --help` muestra todas las opciones.
 
 ## Resultado

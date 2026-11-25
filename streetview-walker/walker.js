@@ -13,6 +13,7 @@ function parseArgs(argv) {
     steps: 20, delay: 2500,
     out: 'capturas', width: 1280, height: 800,
     headless: false, clean: true,
+    manual: false, settle: 1500, perfil: '.perfil',
   };
   for (let i = 2; i < argv.length; i++) {
     const [k, vInline] = argv[i].replace(/^--/, '').split('=');
@@ -32,6 +33,9 @@ function parseArgs(argv) {
       case 'height': a.height = +take(); break;
       case 'headless': a.headless = true; break;
       case 'no-clean': a.clean = false; break;
+      case 'manual': a.manual = true; break;
+      case 'settle': a.settle = +take(); break;
+      case 'perfil': a.perfil = take(); break;
       case 'help': case 'h':
         console.log(`Uso: node walker.js [opciones]
   --lugar "TEXTO"     Lugar a buscar en Google Maps (por defecto "Silo de Santa Olalla, Toledo")
@@ -44,7 +48,12 @@ function parseArgs(argv) {
   --out DIR           Carpeta de salida (por defecto ./capturas)
   --width/--height    Tamaño de la ventana
   --headless          Sin ventana visible
-  --no-clean          No ocultar la interfaz de Maps en las capturas`);
+  --no-clean          No ocultar la interfaz de Maps en las capturas
+
+Modo manual (tú navegas, el script captura al pulsar la flecha arriba):
+  --manual            Abre Google Maps; cada vez que pulses ↑ en Street View, hace una captura
+  --settle MS         Espera extra tras moverse antes de capturar (por defecto 1500)
+  --perfil DIR        Carpeta donde se guardan cookies/sesión del navegador (por defecto .perfil)`);
         process.exit(0);
     }
   }
@@ -147,8 +156,85 @@ async function turn(page, degrees, a) {
   await page.waitForTimeout(800);
 }
 
+// ---------- Modo manual ----------
+async function manualMode(a) {
+  const outDir = path.resolve(a.out);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  // Perfil persistente: las cookies aceptadas y la sesión se recuerdan entre ejecuciones.
+  const context = await chromium.launchPersistentContext(path.resolve(a.perfil), {
+    headless: false,
+    viewport: null,               // usa el tamaño real de la ventana
+    locale: 'es-ES',
+    args: ['--start-maximized', '--use-gl=angle', '--enable-webgl'],
+  });
+
+  const log = [];
+  let n = 0;
+  let queue = Promise.resolve();
+  const samePos = (x, y) => x && y && x.lat === y.lat && x.lng === y.lng;
+
+  async function capture(page, urlBefore) {
+    const before = parseView(urlBefore);
+    // Esperar a que cambie la posición (hasta 6 s) y a que cargue la imagen.
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && samePos(before, parseView(page.url()))) {
+      await page.waitForTimeout(150);
+    }
+    const moved = !samePos(before, parseView(page.url()));
+    await page.waitForTimeout(a.settle);
+
+    let style = null;
+    if (a.clean) style = await page.addStyleTag({ content: CLEAN_CSS }).catch(() => null);
+    await page.waitForTimeout(100);
+    const file = path.join(outDir, `paso_${String(n).padStart(4, '0')}.png`);
+    await page.screenshot({ path: file });
+    if (style) await style.evaluate(el => el.remove()).catch(() => {});
+
+    const view = parseView(page.url());
+    log.push({ paso: n, archivo: path.basename(file), avanzo: moved, ...view, url: page.url(), hora: new Date().toISOString() });
+    fs.writeFileSync(path.join(outDir, 'recorrido.json'), JSON.stringify(log, null, 2));
+    console.log(`[${n}]`, view ? `${view.lat}, ${view.lng} rumbo ${view.heading}º` : '', moved ? '' : '(no se movió)', '→', path.basename(file));
+    n++;
+  }
+
+  // La página llama a esta función cuando pulsas ↑ estando en Street View.
+  await context.exposeBinding('__svArrowUp', ({ page }, urlBefore) => {
+    queue = queue.then(() => capture(page, urlBefore)).catch(e => console.error('Error al capturar:', e.message));
+  });
+  const listener = () => {
+    if (window.__svListener) return;
+    window.__svListener = true;
+    window.addEventListener('keydown', e => {
+      if (e.key === 'ArrowUp' && !e.repeat && /,3a/.test(location.href)) window.__svArrowUp(location.href);
+    }, true);
+  };
+  await context.addInitScript(listener);
+
+  const page = context.pages()[0] || await context.newPage();
+  const start = (a.lat != null && a.lng != null)
+    ? `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${a.lat},${a.lng}&heading=${a.heading}`
+    : 'https://www.google.com/maps';
+  await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(e => console.error(e.message));
+  for (const p of context.pages()) await p.evaluate(listener).catch(() => {});
+
+  console.log('Modo manual listo.');
+  console.log('  1. Entra en Street View donde quieras (el silo, etc.).');
+  console.log('  2. Pulsa ↑ para avanzar: cada pulsación hace una captura en', outDir);
+  console.log('  3. Cierra la ventana del navegador (o Ctrl+C aquí) para terminar.');
+
+  const finish = async () => {
+    await queue.catch(() => {});
+    console.log(`Listo: ${log.length} capturas en ${outDir}`);
+    process.exit(0);
+  };
+  process.on('SIGINT', async () => { await queue.catch(() => {}); await context.close().catch(() => {}); finish(); });
+  context.on('close', finish);
+}
+
 (async () => {
   const a = parseArgs(process.argv);
+  if (a.manual) return manualMode(a);
   const outDir = path.resolve(a.out);
   fs.mkdirSync(outDir, { recursive: true });
 

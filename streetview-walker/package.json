@@ -4,7 +4,8 @@
   "description": "Abre Google Maps en Street View con Playwright, hace capturas y avanza paso a paso.",
   "main": "walker.js",
   "scripts": {
-    "start": "node walker.js"
+    "start": "node walker.js",
+    "manual": "node walker.js --manual"
   },
   "dependencies": {
     "playwright": "^1.48.0"

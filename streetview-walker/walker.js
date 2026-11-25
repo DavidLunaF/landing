@@ -199,14 +199,19 @@ async function manualMode(a) {
   }
 
   // La página llama a esta función cuando pulsas ↑ estando en Street View.
-  await context.exposeBinding('__svArrowUp', ({ page }, urlBefore) => {
+  await context.exposeBinding('__svArrowUp', ({ page }, urlBefore, enStreetView) => {
+    if (!enStreetView) {
+      console.log('↑ detectada, pero no estás en Street View (la URL no tiene ",3a"):', urlBefore.slice(0, 120));
+      return;
+    }
+    console.log('↑ detectada en Street View, esperando a que avance...');
     queue = queue.then(() => capture(page, urlBefore)).catch(e => console.error('Error al capturar:', e.message));
   });
   const listener = () => {
     if (window.__svListener) return;
     window.__svListener = true;
     window.addEventListener('keydown', e => {
-      if (e.key === 'ArrowUp' && !e.repeat && /,3a/.test(location.href)) window.__svArrowUp(location.href);
+      if (e.key === 'ArrowUp' && !e.repeat) window.__svArrowUp(location.href, /,3a/.test(location.href));
     }, true);
   };
   await context.addInitScript(listener);
@@ -217,6 +222,8 @@ async function manualMode(a) {
     : 'https://www.google.com/maps';
   await page.goto(start, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(e => console.error(e.message));
   for (const p of context.pages()) await p.evaluate(listener).catch(() => {});
+  context.on('page', p => console.log('Pestaña nueva abierta:', p.url() || '(cargando)'));
+  console.log('Página abierta:', page.url());
 
   console.log('Modo manual listo.');
   console.log('  1. Entra en Street View donde quieras (el silo, etc.).');

@@ -7,7 +7,8 @@ const path = require('path');
 // ---------- Argumentos ----------
 function parseArgs(argv) {
   const a = {
-    lat: 40.4168, lng: -3.7038,   // Puerta del Sol, Madrid
+    lugar: 'Silo de Santa Olalla, Toledo',  // se busca en Google Maps
+    lat: null, lng: null,
     heading: 0, pitch: 0, fov: 90,
     steps: 20, delay: 2500,
     out: 'capturas', width: 1280, height: 800,
@@ -18,8 +19,9 @@ function parseArgs(argv) {
     const v = vInline ?? argv[i + 1];
     const take = () => { if (vInline === undefined) i++; return v; };
     switch (k) {
-      case 'lat': a.lat = +take(); break;
-      case 'lng': a.lng = +take(); break;
+      case 'lugar': case 'place': a.lugar = take(); break;
+      case 'lat': a.lat = +take(); a.lugar = null; break;
+      case 'lng': a.lng = +take(); a.lugar = null; break;
       case 'heading': a.heading = +take(); break;
       case 'pitch': a.pitch = +take(); break;
       case 'fov': a.fov = +take(); break;
@@ -32,7 +34,8 @@ function parseArgs(argv) {
       case 'no-clean': a.clean = false; break;
       case 'help': case 'h':
         console.log(`Uso: node walker.js [opciones]
-  --lat N --lng N     Punto de inicio (por defecto Puerta del Sol)
+  --lugar "TEXTO"     Lugar a buscar en Google Maps (por defecto "Silo de Santa Olalla, Toledo")
+  --lat N --lng N     Coordenadas de inicio (en vez de --lugar)
   --heading N         Dirección inicial en grados (0 = norte)
   --pitch N           Inclinación (-90..90)
   --fov N             Campo de visión (10..100)
@@ -84,6 +87,30 @@ async function acceptConsent(page) {
   return false;
 }
 
+async function findPlace(page, query) {
+  // Busca el lugar en Google Maps y devuelve sus coordenadas.
+  await page.goto('https://www.google.com/maps/search/' + encodeURIComponent(query), { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await acceptConsent(page);
+  const coordsFromUrl = () => {
+    const u = page.url();
+    const exact = u.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);   // coordenadas exactas del sitio
+    if (exact) return { lat: +exact[1], lng: +exact[2] };
+    return null;
+  };
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const c = coordsFromUrl();
+    if (c) return c;
+    // Si sale una lista de resultados, abrir el primero.
+    const first = page.locator('a.hfpxzc, div[role="feed"] a[href*="/maps/place/"]').first();
+    if (await first.isVisible().catch(() => false)) await first.click().catch(() => {});
+    await page.waitForTimeout(1000);
+  }
+  // Último recurso: el centro del mapa (@lat,lng,zoom).
+  const m = page.url().match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  return m ? { lat: +m[1], lng: +m[2] } : null;
+}
+
 async function waitForPano(page, timeout = 30000) {
   // El panorama se dibuja en un <canvas>; esperamos a que exista y a que la URL sea de Street View.
   await page.waitForFunction(
@@ -128,6 +155,17 @@ async function turn(page, degrees, a) {
   const browser = await chromium.launch({ headless: a.headless, args: ['--use-gl=angle', '--enable-webgl'] });
   const context = await browser.newContext({ viewport: { width: a.width, height: a.height }, locale: 'es-ES' });
   const page = await context.newPage();
+
+  if (a.lugar) {
+    console.log('Buscando en Google Maps:', a.lugar);
+    const c = await findPlace(page, a.lugar);
+    if (!c) {
+      console.error('No se encontró el lugar. Prueba con otro texto o usa --lat/--lng.');
+      await browser.close(); process.exit(1);
+    }
+    console.log(`Encontrado en ${c.lat}, ${c.lng}`);
+    a.lat = c.lat; a.lng = c.lng;
+  }
 
   const startUrl = `https://www.google.com/maps/@?api=1&map_action=pano` +
     `&viewpoint=${a.lat},${a.lng}&heading=${a.heading}&pitch=${a.pitch}&fov=${a.fov}`;

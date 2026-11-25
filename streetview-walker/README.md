@@ -13,8 +13,11 @@ npx playwright install chromium
 ## Uso
 
 ```bash
-# Por defecto: Puerta del Sol (Madrid), 20 pasos, con ventana visible
+# Por defecto: empieza en el Silo de Santa Olalla (Toledo), 20 pasos, con ventana visible
 node walker.js
+
+# Cualquier otro lugar por nombre
+node walker.js --lugar "Silo de Santa Olalla del Cala, Huelva"
 
 # Gran Vía, mirando al oeste, 50 pasos
 node walker.js --lat 40.4203 --lng -3.7058 --heading 270 --steps 50
@@ -32,7 +35,8 @@ node walker.js --headless --delay 4000
 
 ## Cómo funciona
 
-1. Abre `google.com/maps/@?api=1&map_action=pano&viewpoint=LAT,LNG` (Street View directo).
+1. Si se da `--lugar`, lo busca en Google Maps y toma sus coordenadas.
+   Después abre `google.com/maps/@?api=1&map_action=pano&viewpoint=LAT,LNG` (Street View más cercano a ese punto).
 2. Acepta el aviso de cookies si sale.
 3. Espera al panorama, oculta la interfaz (`--no-clean` para dejarla) y captura.
 4. Avanza con la flecha ↑ (o, si no se mueve, con un clic en la flecha del suelo).
